@@ -1,0 +1,79 @@
+-- Step 1: Remove Duplicate Sales Entries
+DELETE FROM sales_data_cleaned
+WHERE order_id IN (
+    SELECT order_id FROM (
+        SELECT order_id,
+               ROW_NUMBER() OVER (
+                   PARTITION BY order_date, product_name, client_name, quantity_sold
+                   ORDER BY order_id
+               ) AS rn
+        FROM sales_data_raw
+    ) AS dedup
+    WHERE rn > 1
+);
+
+-- Step 2: Standardize Date Formats
+ALTER TABLE sales_data_cleaned
+ALTER COLUMN order_date DATE;
+
+ALTER TABLE sales_data_cleaned
+ALTER COLUMN delivery_date DATE;
+
+-- Step 3: Standardize Currency to USD
+-- Exchange rates: EUR→USD = 1.1, CAD→USD = 0.75
+UPDATE sales_data_cleaned
+SET unit_price = 
+    CASE currency
+        WHEN 'EUR' THEN unit_price * 1.1
+        WHEN 'CAD' THEN unit_price * 0.75
+        ELSE unit_price
+    END,
+    currency = 'USD';
+
+-- Step 4: Recalculate Missing or Inaccurate Revenue
+UPDATE sales_data_cleaned
+SET total_revenue = unit_price * quantity_sold
+WHERE total_revenue IS NULL OR total_revenue = 0;
+
+-- Step 5: Handle Missing Client Names (via lookup or most frequent value logic)
+-- Placeholder logic (depends on lookup table availability)
+-- UPDATE sales_data_cleaned
+-- SET client_name = ...
+-- WHERE client_name IS NULL;
+
+-- Step 6: Standardize Product Categories
+UPDATE sales_data_cleaned
+SET product_category = 'Steel Plate'
+WHERE LOWER(product_name) LIKE '%plate%';
+
+UPDATE sales_data_cleaned
+SET product_category = 'Steel Rod'
+WHERE LOWER(product_name) LIKE '%rod%';
+
+-- Step 7: Standardize Region Names
+UPDATE sales_data_cleaned
+SET region = 'North America'
+WHERE LOWER(region) IN ('n.america', 'na', 'north-america');
+
+UPDATE sales_data_cleaned
+SET region = 'Europe'
+WHERE LOWER(region) IN ('eu', 'european region');
+
+-- Step 8: Convert Revenue Column to MONEY Type
+ALTER TABLE sales_data_cleaned
+ALTER COLUMN total_revenue MONEY;
+
+-- Step 9: Add Time Intelligence Columns
+ALTER TABLE sales_data_cleaned
+ADD month_name AS DATENAME(month, order_date);
+
+ALTER TABLE sales_data_cleaned
+ADD fiscal_year AS
+    CASE
+        WHEN MONTH(order_date) >= 4 THEN YEAR(order_date)
+        ELSE YEAR(order_date) - 1
+    END;
+
+ALTER TABLE sales_data_cleaned
+ADD sales_quarter AS
+    'Q' + CAST(DATEPART(QUARTER, order_date) AS VARCHAR(1));
