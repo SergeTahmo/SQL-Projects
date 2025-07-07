@@ -73,7 +73,7 @@ Created avg_order_value = total_spent / total_orders
 Flagged high_value_customer = TRUE if total_spent > 95th percentile
 Created churn_risk_flag if last_purchase_date > 180 days ago
 
-📌 Key SQL Queries
+Key SQL Queries
 To identify high-value customers by region:
 
 
