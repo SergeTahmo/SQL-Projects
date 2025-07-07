@@ -1,0 +1,88 @@
+Table of Contents
+Overview
+Project Objective
+Dataset Summary
+Data Cleaning Tasks
+Removed Inactive Accounts
+Formatted Timestamps
+Corrected Customer Demographics
+Resolved Duplicate Records
+Handled Missing Transaction Data
+Feature Engineering
+Key SQL Queries
+Conclusion
+
+
+
+Overview
+This project focuses on cleaning and enriching customer data for RetailCo Inc., a mid-sized retail chain with both online and in-store operations. The final goal is to enable deep customer segmentation and develop a Power BI dashboard for marketing and operations teams.
+
+Project Objective
+To transform raw, inconsistent customer records into a clean, analysis-ready dataset that captures high-value behaviors such as purchase frequency, average spend, and churn likelihood.
+
+Dataset Summary
+Source: Internal CRM exports (SQL), Point-of-Sale Excel logs, and e-commerce API pulls
+
+Rows: ~12,000
+Columns: 15
+Key Columns:
+customer_id
+signup_date
+last_purchase_date
+total_orders
+total_spent
+gender, age, region
+
+Data Cleaning Tasks
+🔸Removed Inactive Accounts
+Removed customers who signed up but never made a purchase (where total_orders = 0).
+
+
+DELETE FROM retail_customers
+WHERE total_orders = 0;
+
+🔸 Formatted Timestamps
+Converted signup_date and last_purchase_date from text to DATE format to enable time-based analytics.
+
+ALTER TABLE retail_customers
+ALTER COLUMN signup_date DATE;
+
+🔸 Corrected Customer Demographics
+Replaced invalid gender values (e.g., "N/A", "U") with NULL.
+
+Corrected age entries > 100 or < 10 by replacing with the median.
+
+🔸 Resolved Duplicate Records
+Identified and kept only the most recent entry per customer_id.
+
+
+WITH Ranked AS (
+  SELECT *, 
+         ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY last_updated DESC) AS rn
+  FROM retail_customers
+)
+DELETE FROM Ranked WHERE rn > 1;
+
+
+🔸 Handled Missing Transaction Data
+For missing total_spent values but known total_orders, imputed using median order value.
+
+Feature Engineering
+Created customer_tenure = TODAY - signup_date
+Created avg_order_value = total_spent / total_orders
+Flagged high_value_customer = TRUE if total_spent > 95th percentile
+Created churn_risk_flag if last_purchase_date > 180 days ago
+
+📌 Key SQL Queries
+To identify high-value customers by region:
+
+
+SELECT region, COUNT(*) AS high_value_customers
+FROM retail_customers
+WHERE total_spent > 1000
+GROUP BY region;
+
+
+Conclusion
+This project produced a robust, clean dataset ready for Power BI modeling and helped unlock actionable insights for RetailCo’s marketing team. The cleaned data enabled segmentation, churn prediction, and improved targeting of high-value customers.
+
