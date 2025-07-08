@@ -1,0 +1,82 @@
+-- Step 1: Remove duplicate demographic records
+WITH dedup AS (
+    SELECT *,
+           ROW_NUMBER() OVER (
+               PARTITION BY person_id
+               ORDER BY record_date DESC
+           ) AS rn
+    FROM demographics_raw
+)
+DELETE FROM dedup WHERE rn > 1;
+
+-- Step 2: Standardize date columns
+ALTER TABLE demographics_cleaned
+ALTER COLUMN birth_date DATE;
+
+-- Step 3: Calculate age
+ALTER TABLE demographics_cleaned
+ADD age AS DATEDIFF(YEAR, birth_date, GETDATE());
+
+-- Step 4: Categorize age groups
+UPDATE demographics_cleaned
+SET age_group = 
+    CASE
+        WHEN age BETWEEN 0 AND 17 THEN 'Child'
+        WHEN age BETWEEN 18 AND 34 THEN 'Young Adult'
+        WHEN age BETWEEN 35 AND 54 THEN 'Adult'
+        WHEN age >= 55 THEN 'Senior'
+        ELSE 'Unknown'
+    END;
+
+-- Step 5: Standardize gender values
+UPDATE demographics_cleaned
+SET gender = 
+    CASE 
+        WHEN LOWER(gender) IN ('m', 'male') THEN 'Male'
+        WHEN LOWER(gender) IN ('f', 'female') THEN 'Female'
+        ELSE 'Other/Unknown'
+    END;
+
+-- Step 6: Normalize location data (city, state)
+UPDATE demographics_cleaned
+SET city = INITCAP(city),
+    state = UPPER(state);
+
+-- Step 7: Group by ethnicity categories
+UPDATE demographics_cleaned
+SET ethnicity = 
+    CASE 
+        WHEN LOWER(ethnicity) LIKE '%hispanic%' THEN 'Hispanic or Latino'
+        WHEN LOWER(ethnicity) LIKE '%asian%' THEN 'Asian'
+        WHEN LOWER(ethnicity) LIKE '%black%' THEN 'Black or African American'
+        WHEN LOWER(ethnicity) LIKE '%white%' THEN 'White'
+        ELSE 'Other/Unknown'
+    END;
+
+-- Step 8: Calculate household income brackets
+UPDATE demographics_cleaned
+SET income_bracket = 
+    CASE
+        WHEN household_income < 30000 THEN 'Low Income'
+        WHEN household_income BETWEEN 30000 AND 70000 THEN 'Middle Income'
+        WHEN household_income > 70000 THEN 'High Income'
+        ELSE 'Unknown'
+    END;
+
+-- Step 9: Create summary view by age group and gender
+CREATE OR ALTER VIEW vw_demographics_summary AS
+SELECT
+    age_group,
+    gender,
+    COUNT(person_id) AS population_count,
+    AVG(age) AS avg_age
+FROM demographics_cleaned
+GROUP BY age_group, gender;
+
+-- Step 10: Data quality check - missing critical demographic info
+CREATE OR ALTER VIEW vw_missing_demographic_info AS
+SELECT person_id, birth_date, gender, ethnicity, city, state
+FROM demographics_cleaned
+WHERE birth_date IS NULL OR gender IS NULL OR ethnicity IS NULL;
+
+-- End of demographic data analysis script
