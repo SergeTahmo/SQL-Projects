@@ -1,0 +1,106 @@
+-- Step 1: Remove duplicate sales transactions
+WITH dedup AS (
+    SELECT *,
+           ROW_NUMBER() OVER (
+               PARTITION BY transaction_id
+               ORDER BY transaction_timestamp DESC
+           ) AS rn
+    FROM starbucks_sales_raw
+)
+DELETE FROM dedup WHERE rn > 1;
+
+-- Step 2: Standardize date and timestamp fields
+ALTER TABLE starbucks_sales_cleaned
+ALTER COLUMN transaction_date DATE;
+
+ALTER TABLE starbucks_sales_cleaned
+ALTER COLUMN transaction_timestamp DATETIME;
+
+-- Step 3: Calculate total sales amount per transaction
+UPDATE starbucks_sales_cleaned
+SET total_amount = unit_price * quantity;
+
+-- Step 4: Standardize product categories (Coffee, Tea, Food, Merchandise)
+UPDATE starbucks_sales_cleaned
+SET product_category =
+    CASE
+        WHEN LOWER(product_name) LIKE '%coffee%' THEN 'Coffee'
+        WHEN LOWER(product_name) LIKE '%tea%' THEN 'Tea'
+        WHEN LOWER(product_name) LIKE '%sandwich%' OR LOWER(product_name) LIKE '%pastry%' THEN 'Food'
+        WHEN LOWER(product_name) LIKE '%mug%' OR LOWER(product_name) LIKE '%tumbler%' THEN 'Merchandise'
+        ELSE 'Other'
+    END;
+
+-- Step 5: Aggregate daily sales by store and category
+CREATE OR ALTER VIEW vw_daily_sales_by_store AS
+SELECT
+    store_id,
+    transaction_date,
+    product_category,
+    COUNT(DISTINCT transaction_id) AS transaction_count,
+    SUM(quantity) AS total_units_sold,
+    SUM(total_amount) AS total_sales
+FROM starbucks_sales_cleaned
+GROUP BY store_id, transaction_date, product_category;
+
+-- Step 6: Calculate average ticket size per store per day
+CREATE OR ALTER VIEW vw_avg_ticket_size AS
+SELECT
+    store_id,
+    transaction_date,
+    SUM(total_amount) / NULLIF(COUNT(DISTINCT transaction_id), 0) AS avg_ticket_size
+FROM starbucks_sales_cleaned
+GROUP BY store_id, transaction_date;
+
+-- Step 7: Add time intelligence columns
+ALTER TABLE starbucks_sales_cleaned
+ADD sales_month AS DATENAME(month, transaction_date);
+
+ALTER TABLE starbucks_sales_cleaned
+ADD sales_quarter AS 'Q' + CAST(DATEPART(QUARTER, transaction_date) AS VARCHAR(1));
+
+ALTER TABLE starbucks_sales_cleaned
+ADD fiscal_year AS
+    CASE
+        WHEN MONTH(transaction_date) >= 4 THEN YEAR(transaction_date)
+        ELSE YEAR(transaction_date) - 1
+    END;
+
+-- Step 8: Monthly sales performance by product category
+CREATE OR ALTER VIEW vw_monthly_sales_category AS
+SELECT
+    sales_month,
+    fiscal_year,
+    product_category,
+    SUM(total_sales) AS monthly_revenue,
+    SUM(total_units_sold) AS units_sold
+FROM vw_daily_sales_by_store
+GROUP BY sales_month, fiscal_year, product_category;
+
+-- Step 9: Year-over-year sales growth by store
+CREATE OR ALTER VIEW vw_yoy_sales_growth_store AS
+SELECT
+    store_id,
+    fiscal_year,
+    SUM(total_sales) AS total_revenue,
+    LAG(SUM(total_sales)) OVER (PARTITION BY store_id ORDER BY fiscal_year) AS prev_year_revenue,
+    ROUND(
+        100.0 * (SUM(total_sales) - LAG(SUM(total_sales)) OVER (PARTITION BY store_id ORDER BY fiscal_year)) /
+        NULLIF(LAG(SUM(total_sales)) OVER (PARTITION BY store_id ORDER BY fiscal_year), 0), 2
+    ) AS yoy_growth_pct
+FROM vw_daily_sales_by_store
+GROUP BY store_id, fiscal_year;
+
+-- Step 10: Identify stores with declining sales (YoY < 0)
+CREATE OR ALTER VIEW vw_declining_stores AS
+SELECT store_id, fiscal_year, yoy_growth_pct
+FROM vw_yoy_sales_growth_store
+WHERE yoy_growth_pct < 0;
+
+-- Step 11: Data quality check - missing product price or quantity
+CREATE OR ALTER VIEW vw_missing_sales_data AS
+SELECT transaction_id, product_id, unit_price, quantity
+FROM starbucks_sales_cleaned
+WHERE unit_price IS NULL OR quantity IS NULL;
+
+-- End of Starbucks Sales Performance SQL script
