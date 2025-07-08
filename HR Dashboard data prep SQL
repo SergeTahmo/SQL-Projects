@@ -1,0 +1,106 @@
+-- Step 1: Remove duplicate employee records
+WITH dedup AS (
+    SELECT *,
+           ROW_NUMBER() OVER (
+               PARTITION BY employee_id
+               ORDER BY hire_date DESC
+           ) AS rn
+    FROM hr_employees_raw
+)
+DELETE FROM dedup WHERE rn > 1;
+
+-- Step 2: Standardize date fields
+ALTER TABLE hr_employees_cleaned
+ALTER COLUMN hire_date DATE;
+
+ALTER TABLE hr_employees_cleaned
+ALTER COLUMN termination_date DATE;
+
+-- Step 3: Calculate employee tenure in days
+ALTER TABLE hr_employees_cleaned
+ADD tenure_days AS
+    CASE
+        WHEN termination_date IS NOT NULL THEN DATEDIFF(DAY, hire_date, termination_date)
+        ELSE DATEDIFF(DAY, hire_date, GETDATE())
+    END;
+
+-- Step 4: Categorize employees by department
+UPDATE hr_employees_cleaned
+SET department_category =
+    CASE
+        WHEN LOWER(department) LIKE '%sales%' THEN 'Sales'
+        WHEN LOWER(department) LIKE '%engineering%' THEN 'Engineering'
+        WHEN LOWER(department) LIKE '%hr%' THEN 'HR'
+        WHEN LOWER(department) LIKE '%finance%' THEN 'Finance'
+        ELSE 'Other'
+    END;
+
+-- Step 5: Flag active vs terminated employees
+ALTER TABLE hr_employees_cleaned
+ADD employment_status AS
+    CASE
+        WHEN termination_date IS NULL THEN 'Active'
+        ELSE 'Terminated'
+    END;
+
+-- Step 6: Calculate monthly headcount by department
+CREATE OR ALTER VIEW vw_monthly_headcount AS
+SELECT
+    YEAR(hire_date) AS year,
+    MONTH(hire_date) AS month,
+    department_category,
+    COUNT(employee_id) AS hires
+FROM hr_employees_cleaned
+GROUP BY YEAR(hire_date), MONTH(hire_date), department_category;
+
+-- Step 7: Calculate monthly terminations by department
+CREATE OR ALTER VIEW vw_monthly_terminations AS
+SELECT
+    YEAR(termination_date) AS year,
+    MONTH(termination_date) AS month,
+    department_category,
+    COUNT(employee_id) AS terminations
+FROM hr_employees_cleaned
+WHERE termination_date IS NOT NULL
+GROUP BY YEAR(termination_date), MONTH(termination_date), department_category;
+
+-- Step 8: Employee turnover rate per department per month
+CREATE OR ALTER VIEW vw_turnover_rate AS
+SELECT
+    h.year,
+    h.month,
+    h.department_category,
+    h.hires,
+    t.terminations,
+    CASE
+        WHEN h.hires + t.terminations = 0 THEN 0
+        ELSE CAST(t.terminations AS FLOAT) / (h.hires + t.terminations) * 100
+    END AS turnover_rate_pct
+FROM vw_monthly_headcount h
+LEFT JOIN vw_monthly_terminations t
+    ON h.year = t.year AND h.month = t.month AND h.department_category = t.department_category;
+
+-- Step 9: Average tenure by department
+CREATE OR ALTER VIEW vw_avg_tenure AS
+SELECT
+    department_category,
+    AVG(tenure_days) AS avg_tenure_days
+FROM hr_employees_cleaned
+WHERE employment_status = 'Terminated'
+GROUP BY department_category;
+
+-- Step 10: Data quality check - missing key employee info
+CREATE OR ALTER VIEW vw_missing_employee_info AS
+SELECT employee_id, employee_name
+FROM hr_employees_cleaned
+WHERE email IS NULL OR phone IS NULL;
+
+-- Step 11: Performance rating distribution
+CREATE OR ALTER VIEW vw_performance_distribution AS
+SELECT
+    performance_rating,
+    COUNT(employee_id) AS count_employees
+FROM hr_employees_cleaned
+GROUP BY performance_rating;
+
+-- End of HR Dashboard data prep script
