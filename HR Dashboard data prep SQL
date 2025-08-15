@@ -16,7 +16,7 @@ ALTER COLUMN hire_date DATE;
 ALTER TABLE hr_employees_cleaned
 ALTER COLUMN termination_date DATE;
 
--- Step 3: Calculate employee tenure in days
+-- Step 3: Calculate employee tenure in days 
 ALTER TABLE hr_employees_cleaned
 ADD tenure_days AS
     CASE
